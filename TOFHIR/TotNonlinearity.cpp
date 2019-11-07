@@ -17,6 +17,7 @@
 #include "TMath.h"
 #include "TVector3.h"
 #include "TLorentzVector.h"
+#include "Math/MinimizerOptions.h"
 
 #include <sys/stat.h>
 #include <iostream>
@@ -49,11 +50,18 @@ float Gain(float ov){
   return(gain); 
 }
 
+float ENF(float ov){
+  float enf = 0.00258 * pow(ov,2) -0.00219 * ov + 1.00644;
+  return(enf); 
+}
+
 //=========== MAIN =================================
 
 int main(int argc, char** argv)
 {
-
+  ROOT::Math::MinimizerOptions::SetDefaultMaxFunctionCalls(10000); 
+  ROOT::Math::MinimizerOptions::SetDefaultTolerance(1);
+ 
   setTDRStyle();
 
   string outdir = "NonLinearityToT/";
@@ -163,9 +171,9 @@ int main(int argc, char** argv)
     h_tot[ov] ->Fit( fGaus[iov], "QRS");
     fGaus[iov]->SetRange(xmax-0.5*fGaus[iov]->GetParameter(2), xmax+0.5*fGaus[iov]->GetParameter(2));
     h_tot[ov] ->Fit( fGaus[iov], "QRS");
-    float peakTot    = fGaus[iov]->GetParameter(1);
-    float peakTotErr = fGaus[iov]->GetParError(1);
-    float amp = PDE(ov) * Gain(ov) / 1000.;
+    double peakTot    = fGaus[iov]->GetParameter(1);
+    double peakTotErr = fGaus[iov]->GetParError(1);
+    double amp = PDE(ov) * Gain(ov) / 1000. * ENF(ov);
     g_pde_vs_ov->SetPoint(iov, ov, PDE(ov));
     g_gain_vs_ov->SetPoint(iov, ov, Gain(ov));
     g_tot_vs_amp->SetPoint(iov, amp, peakTot);
@@ -177,6 +185,7 @@ int main(int argc, char** argv)
   //TF1 *fCorr = new TF1("fCorr","expo", 0, 1000); // simple exponential
   //TF1 *fCorr = new TF1("fCorr","[0]*x + [1]*x*x + [2]*x*x*x", 0, 1000 ); // pol, passing by 0 for tot = 0
   TF1 *fCorr = new TF1("fCorr","[0] * ( exp([1]*x) - 1 )", 0, 1000); // shifted exponential, passing by 0 for tot = 0
+  fCorr->SetParameter(0, 20.);
   fCorr->SetParameter(1, 0.015);
   //TF1 *fCorr = new TF1("fCorr","[0] * ( exp([1]*x) -  exp([2]*x))", 0, 1000); // sum of exponential, passing by 0 for tot = 0
   //fCorr->SetParameter(0, 300);
@@ -244,7 +253,7 @@ int main(int argc, char** argv)
     float lastx = h_tot_corr[ov] -> GetBinCenter(lastbin);
     h_tot_corr[ov] -> GetXaxis()->SetRangeUser(lastx*0.3, lastx*10);
     int maxbin = h_tot_corr[ov] -> GetMaximumBin();
-    float xmax = h_tot_corr[ov] -> GetBinCenter(maxbin);
+    double xmax = h_tot_corr[ov] -> GetBinCenter(maxbin);
     fGaus2[iov]->SetParameter(1,xmax);
     fGaus2[iov]->SetParameter(2,0.1*xmax);
     fGaus2[iov]->SetRange(xmax-0.1*xmax, xmax+0.1*xmax);
@@ -257,6 +266,9 @@ int main(int argc, char** argv)
     f2[iov] = new TF1(Form("f2_%.02f",ov), megafit.c_str(), 0, 1000);
     f2[iov]->SetLineColor(800+20*iov);
 
+    //f2[iov]->SetParameter(1, 0.1);
+    //f2[iov]->SetParameter(7, 0.1);
+    
     f2[iov]->SetParameter(2, peak1*2.5*0.9);
     f2[iov]->SetParameter(8, peak1*0.9);
 
@@ -266,13 +278,8 @@ int main(int argc, char** argv)
     f2[iov]->SetParameter(4, peak1*2.5);
     f2[iov]->SetParameter(5, peak1sigma/sqrt(2.5));
 
-    f2[iov]->SetParameter(13, peak1*0.35);
-    f2[iov]->SetParameter(16, peak1*0.35);
-    f2[iov]->SetParameter(14, peak1sigma/sqrt(0.35));
-    f2[iov]->SetParameter(17, peak1sigma/sqrt(0.35));
-
     // backscatter peak
-    //f2[iov]->FixParameter(12, 0);
+    // f2[iov]->FixParameter(12, 0);
     f2[iov]->SetParameter(13, peak1*0.35);
     f2[iov]->SetParameter(14, peak1sigma/sqrt(0.35));
     //f2[iov]->FixParameter(15, 0);
@@ -289,27 +296,32 @@ int main(int argc, char** argv)
       h_tot_corr[ov] ->Fit( f2[iov], "QRS");
     }
     
-    f2[iov]->SetRange(peak1-3.5*peak1sigma, 10000);
-    h_tot_corr[ov] ->Fit( f2[iov], "QRS");
-   
-    cout << "OV = " << ov <<
-            "  511 keV peak = " << f2[iov]->GetParameter(10) << " +/- " << f2[iov]->GetParError(10) <<
-            " 1275 keV peak = " << f2[iov]->GetParameter(4) << " +/- " << f2[iov]->GetParError(4) <<
-            "      chi2/ndf = " << f2[iov]->GetChisquare()/f2[iov]-> GetNDF()<<endl;
+    f2[iov]->SetRange(peak1-5.0*peak1sigma, 10000);
+    TFitResultPtr r = h_tot_corr[ov]->Fit( f2[iov], "QRS");
+    
+    if (r!=0){
+      r = h_tot_corr[ov] ->Fit( f2[iov], "QRSM");
+    }
+    
+    cout << "OV = " << ov 
+	 << "  511 keV peak = " << f2[iov]->GetParameter(10) << " +/- " << f2[iov]->GetParError(10) 
+	 << " 1275 keV peak = " << f2[iov]->GetParameter(4) << " +/- " << f2[iov]->GetParError(4) 
+	 << "      chi2/ndf = " << f2[iov]->GetChisquare()/f2[iov]-> GetNDF() 
+	 << "      fitStatus = " << r  <<endl;
         
     float peakCorr1  = f2[iov]->GetParameter(10);
     float peakCorr2  = f2[iov]->GetParameter(4);
     float ratio = peakCorr2/peakCorr1;
     float err = ratio * sqrt(pow(f2[iov]->GetParError(10)/peakCorr1,2) + pow(f2[iov]->GetParError(4)/peakCorr2,2) );
 
-    if (f2[iov]->GetChisquare()/f2[iov]-> GetNDF() < 2 ){
+    if ( r==0 && f2[iov]->GetChisquare()/f2[iov]-> GetNDF() < 2 ){
       g_totcorr_vs_ov->SetPoint(iov, ov, ratio);
       g_totcorr_vs_ov->SetPointError(iov, 0, err);
     }
      
   }
   
-
+  g_totcorr_vs_ov->Fit("pol0");
 
   // == plots
   outdir = outdir + Form("vth1_%d", vth1) + "_" +  Form("vth2_%d", vth2) + "/";
@@ -356,9 +368,12 @@ int main(int argc, char** argv)
   hdummy2->Draw();
   g_amp_vs_tot->Draw("psame");
   latex->Draw();
-  //TPaveStats *st = (TPaveStats*)g_amp_vs_tot->FindObject("stats");
-  //st->SetX1NDC(0.7);
-  //st->SetX2NDC(0.8); 
+  gPad->Update();
+  TPaveStats *st = (TPaveStats*)g_amp_vs_tot->FindObject("stats");
+  st->SetX1NDC(0.65);
+  st->SetX2NDC(0.85);
+  st->SetY1NDC(0.77);
+  st->SetY2NDC(0.92);  
   c_corr->SaveAs((outdir+"c_correction.pdf").c_str());
   c_corr->SaveAs((outdir+"c_correction.png").c_str());
   
